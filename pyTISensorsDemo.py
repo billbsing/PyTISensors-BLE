@@ -17,7 +17,7 @@
 
 
 
-import argparse, logging, struct, binascii, sys, time
+import argparse, logging, struct, binascii, sys, time, os
 
 
 """
@@ -41,9 +41,10 @@ SensorUUIDList = {	'09596E0000E5C578': 'TIKeyFobSensor',
 				}
 
 class TISensor():
-	def __init__(self, gattServer, connectSession):
+	def __init__(self, gattServer, connectSession, ledDevice = None):
 		self._gattServer = gattServer
 		self._connectSession = connectSession
+		self._ledDevice = ledDevice
 	
 	def accelerometer(self):
 		logging.warn("This sensor device does not support accelerometer")
@@ -67,6 +68,12 @@ class TISensor():
 		logging.warn("This sensor device does not support barometer")
 
 
+	def _writeLEDDevice(self, value):
+		if self._ledDevice and os.path.exists(self._ledDevice):
+			with open(self._ledDevice, 'w') as fp:
+				fp.write(value)
+		
+		
 
 class TIKeyFobSensor(TISensor):
 	
@@ -129,7 +136,7 @@ class TITagSensor(TISensor):
 		self._connectSession.writeRequestByte(0x31, 0x01)
 
 		# speed up the time period to fastest
-		self._connectSession.writeRequestByte(0x34, 10)
+		self._connectSession.writeRequestByte(0x34, 100)
 				
 		
 		
@@ -247,6 +254,8 @@ class TITagSensor(TISensor):
 		
 
 	def _onNotification(self, attribute, value):
+		self._writeLEDDevice("255")
+		
 		if attribute == 0x2D:			# data from the accelerometer
 			self.accelerometerValues['x'] = value[0]
 			self.accelerometerValues['y'] = value[1]
@@ -290,6 +299,8 @@ class TITagSensor(TISensor):
 				self._gattServer.responseFinished()
 		else:
 			print("Attribue = %04X" % attribute)
+			
+		self._writeLEDDevice("0")
 			
 class Commands:
 	
@@ -343,7 +354,7 @@ class Commands:
 		# setup a dummy connectSession
 		
 		connectSession = self._gattServer.addConnectSession(remoteAddress, 0)
-		sensor = self._loadSensor(connectSession, 2)
+		sensor = self._loadSensor(connectSession, 2, self._args.ledDevice)
 		if sensor == None:
 			# connect session failed so now remove it
 			self._gattServer.removeConnectSession(connectSession)
@@ -352,7 +363,7 @@ class Commands:
 			connectSession = self._gattServer.connect(remoteAddress)
 			if connectSession:
 				# find the correct sensor based on the UUID returned from the device
-				sensor = self._loadSensor(connectSession)
+				sensor = self._loadSensor(connectSession, None, self._args.ledDevice)
 				if sensor:
 					return sensor
 			else:
@@ -420,7 +431,7 @@ class Commands:
 		else:
 			logging.error("Cannot connect to device %s" % remoteAddress)
 		
-	def _loadSensor(self, connectSession, timeout = None):
+	def _loadSensor(self, connectSession, timeout = None, led_device = None):
 		# find the type of remote device from UUID
 		# i assume that all sensor tags support the handle 0x12 to read the uuid of the device.
 		
@@ -434,7 +445,7 @@ class Commands:
 		if deviceUUID in SensorUUIDList:
 			sensorName = SensorUUIDList[deviceUUID]
 			logging.debug("Found sensor '%s'" % sensorName)
-			sensor = getattr(sys.modules[__name__], sensorName)(self._gattServer, connectSession)
+			sensor = getattr(sys.modules[__name__], sensorName)(self._gattServer, connectSession, led_device)
 		else:
 			print("Unknown device connected '%s'" % deviceUUID)
 		return sensor
@@ -461,6 +472,11 @@ def main():
 						help='Device to connect too'
 					)
 
+	parser.add_argument('--led', dest='ledDevice',
+						default = None,
+						help='LED device to flash when reading data. e.g. /sys/class/leds/ph21:blue:led2/brightness'
+						)
+						
 	parser.add_argument('--timeout', '-t', 
 						dest='timeout',
 						type=int,

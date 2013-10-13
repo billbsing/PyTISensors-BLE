@@ -163,24 +163,25 @@ class SocketDevice(Device):
 	
 	"""
 	def open(self, deviceName):
-		macAddress = "00:15:83:45:68:0B"
 		self._deviceName = deviceName
 		self._socket = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
-		#self._socket.setsockopt(socket.SOL_HCI, socket.HCI_DATA_DIR,1)
-		#self._socket.setsockopt(socket.SOL_HCI, socket.HCI_TIME_STAMP,1)
-		#self._socket.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, struct.pack("IIIh2x", 0xffffffff, 0xffffffff, 0xffffffff, 0)) #type mask, event mask, event mask, opcode
-		#self._socket.settimeout(0.5)
-		#self._socket.bind((0x10000, ))
+		self._socket.setsockopt(socket.SOL_HCI, socket.HCI_DATA_DIR,1)
+		self._socket.setsockopt(socket.SOL_HCI, socket.HCI_TIME_STAMP,1)
+		self._socket.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, struct.pack("IIIh2x", 0xffffffff, 0xffffffff, 0xffffffff, 0)) #type mask, event mask, event mask, opcode
+		self._socket.settimeout(0.5)
+		print("Connecting to device '%s'" % self._deviceName)
+		#self._socket.bind((self._deviceName, 1))
 		#self._socket.listen(1)
 		#self._socketClient, self._address = self._socket.accept()
 	
 	def read(self, byteLength = 0):
-		print("Read serial %d" % byteLength)
+ 		#print("Read serial %d" % byteLength) 
 		return self._socket.recv(byteLength)
-		
+
 	def write(self, data):
 		return self._socket.send(data)
-		
+
+
 class GATTServer:
 	"""
 	The General Attribute Server.
