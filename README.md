@@ -41,6 +41,8 @@ Usage:
       -h, --help            show this help message and exit
       --device DEVICE, -d DEVICE
                             Device to connect too
+	  --led LEDDEVICE       LED device to flash when reading data. e.g.
+    	                    /sys/class/leds/ph21:blue:led2/brightness                    
       --timeout TIMEOUT, -t TIMEOUT
                             Timeout in seconds before a GATT command will fail.
       --address ADDRESS, -a ADDRESS
