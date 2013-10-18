@@ -77,10 +77,13 @@ class TISensor():
 
 class TIKeyFobSensor(TISensor):
 	
+	def __init__(self, *args, **kwargs):
+		super(TIKeyFobSensor, self).__init__(*args, **kwargs)
+		self.accelerometerValues = {'x': 0, 'y': 0, 'z': 0}
+		
 	def accelerometer(self):
 			
 		self._connectSession.OnEventNotification = self._onNotification
-		self.accelerometerValues = {'x': 0, 'y': 0, 'z': 0}
 		
 		# enable key press
 		self._connectSession.writeRequestWord(0x48, 0x01)
@@ -123,12 +126,21 @@ class TIKeyFobSensor(TISensor):
 			print("Unkown attribute %04X =" % (attribute), value)
 
 class TITagSensor(TISensor):
-	
+
+	# see http://processors.wiki.ti.com/index.php/SensorTag_User_Guide
+	def __init__(self, *args, **kwargs):
+		super(TITagSensor, self).__init__(*args, **kwargs)	
+		self.accelerometerValues = {'x': 0, 'y': 0, 'z': 0}
+		self.gyroscopeValues = {'x': 0, 'y': 0, 'z': 0}
+		self.tempValues = {'object': 0, 'ambient': 0}
+		self.humidityValues = {'temperature': 0, 'humidity': 0}
+		self.magnetometerValues = {'x': 0, 'y': 0, 'z': 0}
+		self.barometerValues = {'temperature': 0, 'pressure': 0}
+		self._barometerCalibration = None
+		
 	def accelerometer(self):
 			
 		self._connectSession.OnEventNotification = self._onNotification
-		self.accelerometerValues = {'x': 0, 'y': 0, 'z': 0}
-		
 
 		# enable accelerometer notification
 		self._connectSession.writeRequestWord(0x2E, 0x01)
@@ -136,7 +148,7 @@ class TITagSensor(TISensor):
 		self._connectSession.writeRequestByte(0x31, 0x01)
 
 		# speed up the time period to fastest
-		self._connectSession.writeRequestByte(0x34, 100)
+		self._connectSession.writeRequestByte(0x34, 10)
 				
 		
 		
@@ -152,7 +164,6 @@ class TITagSensor(TISensor):
 
 	def gyroscope(self):
 		self._connectSession.OnEventNotification = self._onNotification
-		self.gyroscopeValues = {'x': 0, 'y': 0, 'z': 0}
 		
 
 		# enable Gyroscope notification (all axis)
@@ -174,7 +185,6 @@ class TITagSensor(TISensor):
 
 	def temperature(self):
 		self._connectSession.OnEventNotification = self._onNotification
-		self.tempValues = {'object': 0, 'ambient': 0}
 		# enable temp notification
 		self._connectSession.writeRequestWord(0x26, 0x01)
 
@@ -193,7 +203,6 @@ class TITagSensor(TISensor):
 		
 	def humidity(self):
 		self._connectSession.OnEventNotification = self._onNotification
-		self.humidityValues = {'temperature': 0, 'humidity': 0}
 		# enable humidity notification
 		self._connectSession.writeRequestWord(0x39, 0x01)
 
@@ -212,14 +221,13 @@ class TITagSensor(TISensor):
 
 	def magnetometer(self):
 		self._connectSession.OnEventNotification = self._onNotification
-		self.magnetometerValues = {'x': 0, 'y': 0, 'z': 0}
 
 		# enable magnetometer notification
 		self._connectSession.writeRequestWord(0x41, 0x01)
 		# wake up the sensor
 		self._connectSession.writeRequestByte(0x44, 0x01)
 
-		# now wait for data , key press or timeout
+		# set frequency to every 10ms
 		self._connectSession.writeRequestByte(0x47, 10)
 				
 		
@@ -234,16 +242,32 @@ class TITagSensor(TISensor):
 
 	def barometer(self):
 		self._connectSession.OnEventNotification = self._onNotification
-		self.barometerValues = {'temperature': 0, 'pressure': 0}
+
+		# enable key interupts
+		self._connectSession.writeRequestWord(0x60, 0x01)
+
+
 		# enable barometer notification
 		self._connectSession.writeRequestWord(0x4C, 0x01)
 
-		# enable barometer sensor
-		self._connectSession.writeRequestByte(0x4F, 0x01)
+		# enable barometer sensor calibration
+		self._connectSession.writeRequestByte(0x4F, 0x02)
 
+		# read the calibration
+		data = self._connectSession.discoverByHandle(0x52)
+		
+		
+		self._barometerCalibration = struct.unpack('<8H', struct.pack('<16B', *data))
+		#print(self._barometerCalibration)
+		
+
+		# enable barometer sensor events
+		self._connectSession.writeRequestByte(0x4F, 0x01)
 
 		# now wait for data , key press or timeout
 		self._gattServer.waitForResponse()
+
+
 		
 		# finish - so put barometer to sleep
 		self._connectSession.writeRequestByte(0x4F, 0x00)		
@@ -251,52 +275,117 @@ class TITagSensor(TISensor):
 		# disable barometer sensor notifications
 		self._connectSession.writeRequestWord(0x4C, 0x00)
 
-		
+		# turn off key press
+		self._connectSession.writeRequestByte(0x60, 0x00)
+	
 
 	def _onNotification(self, attribute, value):
 		self._writeLEDDevice("255")
 		
 		if attribute == 0x2D:			# data from the accelerometer
-			self.accelerometerValues['x'] = value[0]
-			self.accelerometerValues['y'] = value[1]
-			self.accelerometerValues['z'] = value[2]
+			# //-- calculate acceleration, unit g, range -2, +2
+			self.accelerometerValues['x'] = float(value[0]) / 64
+			self.accelerometerValues['y'] = float(value[1]) / 64
+			self.accelerometerValues['z'] = float(value[2]) / 64
 			print(self.accelerometerValues)
 			
 		elif attribute == 0x57:			# data from the gyroscope
-			values = struct.unpack('<HHH', value)
-			self.gyroscopeValues['x'] = values[0]
-			self.gyroscopeValues['y'] = values[1]	
-			self.gyroscopeValues['z'] = values[2]	
+			# //-- calculate rotation, unit deg/s, range -250, +250
+			values = struct.unpack('<hhh', value)
+			self.gyroscopeValues['x'] = float(values[0]) / (65536 / 500)
+			self.gyroscopeValues['y'] = float(values[1]) / (65536 / 500)	
+			self.gyroscopeValues['z'] = float(values[2]) / (65536 / 500)
 			print(self.gyroscopeValues)
 			
 		elif attribute == 0x25:			# data from the external temperature
+			# see TMP006 data sheet
+			
 			values = struct.unpack('<HH', value)
-			self.tempValues['object'] = values[0]
-			self.tempValues['ambient'] = values[1]	
+			ambientTemp = float(values[1]) / 128.0
+			vObj2 = float(values[0]) * 0.00000015625
+			
+			temp2 = ambientTemp + 273.15
+			
+			s0 = 6.4E-14;           # Calibration factor
+			a1 = 1.75E-3
+			a2 = -1.678E-5
+			b0 = -2.94E-5
+			b1 = -5.7E-7
+			b2 = 4.63E-9
+			c2 = 13.4
+			tempRef = 298.15
+			s = s0* ( 1 + a1*(temp2 - tempRef) + a2 * pow((temp2 - tempRef), 2))
+			vos = b0 + b1 * (temp2 - tempRef) + b2 * pow((temp2 - tempRef), 2)
+			fObj = (vObj2 - vos) + c2 * pow((vObj2 - vos), 2)
+			tObj = pow(pow(temp2, 4) + (fObj/s), .25)
+			tObj = tObj - 273.15
+			self.tempValues['object'] = tObj
+			self.tempValues['ambient'] = ambientTemp
 			print(self.tempValues)
 					
 		elif attribute == 0x38:			#data from the humidity sensor
+			# see spec on HT_DS_SHT21_EN_V3_c1.pdf, about calculation on humidity
 			values = struct.unpack('<HH', value)
-			self.humidityValues['temperature'] = values[0]
-			self.humidityValues['humidity'] =values[1]
+			calcValue = float(values[0])
+			self.humidityValues['temperature'] =  -46.85 + 175.72 * (calcValue / ( 2 ** 16))
+			
+			calcValue = float(values[1] & (~0x03))
+			self.humidityValues['humidity'] = -6 + 125 * ( calcValue / ( 2 ** 16))
 			print(self.humidityValues)
 			
 		elif attribute == 0x40:			#data from the magnetometer
-			values = struct.unpack('<HHH', value)
-			self.magnetometerValues['x'] = values[0]
-			self.magnetometerValues['y'] = values[1]
-			self.magnetometerValues['z'] = values[2]
+			# //-- calculate magnetic-field strength, unit uT, range -1000, +1000
+			values = struct.unpack('<hhh', value)
+			self.magnetometerValues['x'] = float(values[0]) / (65536/2000)
+			self.magnetometerValues['y'] = float(values[1]) / (65536/2000)
+			self.magnetometerValues['z'] = float(values[2]) / (65536/2000)
 			print(self.magnetometerValues)
 			
 		elif attribute == 0x4B:			#data from the barometer sensor
+			# see data sheet for T5400.pdf
+			# pressure values in hPa, tempreature in Kelvin
 			values = struct.unpack('<HH', value)
-			self.barometerValues['temperature'] = values[0]
-			self.barometerValues['pressure'] = values[1]
-			print(self.barometerValues)
+			
+			if self._barometerCalibration:
+				"""
+					*  Formula from application note, rev_X:
+					*  Ta = ((c1 * Tr) / 2^24) + (c2 / 2^10)
+				"""
+				
+				rawTemp = float(values[0])
+				temp = ( (float(self._barometerCalibration[0]) * rawTemp) / pow(2, 24) ) +			\
+						 ( float(self._barometerCalibration[1]) / pow(2, 10) );
+				
+				self.barometerValues['temperature'] = temp
+				"""
+					 * Formula from application note, rev_X:
+					 * Sensitivity = (c3 + ((c4 * Tr) / 2^17) + ((c5 * Tr^2) / 2^34))
+					 * Offset = (c6 * 2^14) + ((c7 * Tr) / 2^3) + ((c8 * Tr^2) / 2^19)
+					 * Pa = (Sensitivity * Pr + Offset) / 2^14				
+				"""
+				# convert to bar
+				
+				sensitivity = float(self._barometerCalibration[2]) + 											\
+									( (float(self._barometerCalibration[3]) * rawTemp ) / pow(2, 17) ) + 		\
+									( (float(self._barometerCalibration[4]) * pow(rawTemp, 2)) / pow(2, 34) )
+				offset =  (float(self._barometerCalibration[5]) * pow(2, 14)) +									\
+							( (float(self._barometerCalibration[6]) * rawTemp) / pow(2, 3) ) +					\
+							( (float(self._barometerCalibration[7]) * pow(rawTemp, 2)) / pow(2, 19) ) 
+							
+				pressure = ( (sensitivity * float(values[1])) + offset) / pow(2, 14)
+				
+				self.barometerValues['pressure'] = pressure / 100
+				print(self.barometerValues)
 
 		elif attribute == 0x5F:			#key pressed
+			value = struct.unpack('<B', value)[0]
 			if value == 0x01:			# force  a close down, this will stop the reading of data and return back 
-				self._gattServer.responseFinished()
+				print("right key down")
+				#self._gattServer.responseFinished()
+			elif value == 0x02:
+				print("left key down")
+			elif value == 0x00:
+				print("Key release")
 		else:
 			print("Attribue = %04X" % attribute)
 			
